@@ -466,6 +466,7 @@ const room = new THREE.Group(); scene.add(room);
     const doorSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowSprite('#b060ff'), transparent: true, opacity: 0.5, depthWrite: false }));
     doorSprite.scale.set(3.6, 6.0, 1); doorSprite.position.set(0, 2.6, -54.2); plaza.add(doorSprite);
     const gateLight = new THREE.PointLight(0x9a4dff, 14, 18, 1.4); gateLight.position.set(0, 3, -53); plaza.add(gateLight);
+    room.userData.gate = { doorGlow, doorSprite, light: gateLight };
     const bw = new THREE.Mesh(new THREE.PlaneGeometry(13, 8), new THREE.MeshStandardMaterial({ map: wallMat.map, roughness: 0.9 }));
     bw.position.set(0, 4, -55.4); plaza.add(bw);
     // papel strings over the plaza
@@ -909,7 +910,7 @@ const B = {
   playerHP: 20, playerMax: 20,
   items: { 'Monster Candy': 3, 'Spider Donut': 1 },
   turn: 0, invuln: 0, shake: 0, pattern: null, patternT: 0,
-  soulMode: 'red', vy: 0, grounded: true, moving: false, captured: false, boardPop: 1, sansMet: false, sansTalking: false,
+  soulMode: 'red', vy: 0, grounded: true, moving: false, captured: false, boardPop: 1, sansMet: false, sansTalking: false, kills: 0, ending: false,
   done: { calaca: false, froggit: false, toriel: false, papyrus: false },
 };
 const foeModel = () => B.foe.model();
@@ -1039,7 +1040,7 @@ const FOES = {
     lowHP: ['* PAPYRUS wobbles. "I AM... MOSTLY FINE!"'],
     kill: ['* PAPYRUS tips his hat.', '* "WELL. YOU ARE STRONG... AND NOTHING ELSE."', '* He crumbles into petals.', '* The bridge feels very long now.'],
     winSub: { spared: 'PAPYRUS declared you his friend and taught you the handshake. It has 40 steps.', killed: 'The marigold bridge is quiet. No maracas play.' },
-    winNext: 'the Ninth Gate stands sealed... for now. (v0.4 - to be continued)',
+    winNext: 'the Ninth Gate glows at the far end of the plaza.',
     revive: ['* You refuse to fall.', '* "SEE? DETERMINATION! MY FAVORITE BONE-TRAIT!"'],
   },
 };
@@ -1321,6 +1322,7 @@ function resolveHit(dmg) {
   }
 }
 function killFoe() {
+  B.kills++;
   AudioSys.thud();
   petalBurst(foeModel().position.clone().add(new THREE.Vector3(0, 1.4, 0)), 0xff8f1f, 30);
   foeModel().userData.explode = true;
@@ -1470,6 +1472,97 @@ function exitBattle() {
   playerHeart.position.set(0, 0.9, B.foe ? foeModel().position.z + 2.6 : 0.5);
 }
 
+/* ============================== ENDING / RESTART ============================== */
+function waitKey() {
+  return new Promise(r => {
+    const tick = () => { if (consumeConfirm()) { r(); return; } requestAnimationFrame(tick); };
+    tick();
+  });
+}
+async function showCard(html, delay) {
+  cardEl.innerHTML = html;
+  cardEl.style.display = 'flex';
+  await new Promise(r => setTimeout(r, delay || 700));
+  await waitKey();
+  cardEl.style.display = 'none';
+}
+async function startEnding() {
+  if (B.ending) return;
+  B.ending = true;
+  gameState = 'ending';
+  showHint('');
+  hudEl.style.display = 'none'; dlgEl.style.display = 'none'; menuEl.style.display = 'none';
+  AudioSys.stopMusic();
+  setFade(1, '#fff');
+  AudioSys.spare();
+  await new Promise(r => setTimeout(r, 650));
+  const g = room.userData.gate;
+  if (g) {
+    g.doorGlow.material.color.setHex(0xffd23a);
+    g.doorSprite.material.map = glowSprite('#ffd23a');
+    g.doorSprite.material.needsUpdate = true;
+    g.doorSprite.material.opacity = 0.95;
+    g.light.color.setHex(0xffc23a);
+    g.light.intensity = 34;
+  }
+  petalBurst(new THREE.Vector3(0, 2.6, -53.2), 0xffd23a, 60);
+  petalBurst(new THREE.Vector3(0, 1.2, -51.5), 0xff8f1f, 40);
+  setFade(0, '#fff');
+  AudioSys.startMusic('ruins');
+  await new Promise(r => setTimeout(r, 1400));
+  const k = B.kills;
+  if (k === 0) {
+    await showCard(`<div class="big">THE NINTH GATE OPENS</div><div class="small">The ledger is balanced.<br>Every soul you met, you met with kindness.</div>`);
+    await showCard(`<div class="small">TORIEL keeps the door a little longer now.<br>FROGGIT hops the corridors, off the beat.<br>PAPYRUS is painting the bridge. A third coat.<br><br>And a short calaca in a hoodie tips his<br>skull to you as you pass.</div>`);
+    await showCard(`<div class="small">Somewhere past the gate, the living world waits.<br>You will wake with paint on your hands<br>and marigolds in your pockets.<br><br>The dead will watch over you.</div>`);
+  } else if (k <= 2) {
+    await showCard(`<div class="big">THE NINTH GATE OPENS</div><div class="small">The ledger balances, but the ink is smudged.<br>${k === 1 ? 'One candle was blown out' : 'Two candles were blown out'} on your way here.</div>`);
+    await showCard(`<div class="small">The dead forgive. It is what they do best.<br>They do not forget.<br><br>Walk gently, back into the sun.</div>`);
+  } else {
+    await showCard(`<div class="big">THE GATE OPENS</div><div class="small">It does not celebrate.</div>`);
+    await showCard(`<div class="small">Where the candles burned, wax and ash.<br>The corridor is very quiet now.<br>The bridge is very long.</div>`);
+    await showCard(`<div class="small">A short calaca watches you pass.<br>His eye does not flicker gold.<br><br>* "...you'll get no flowers from me, kid."</div>`);
+  }
+  await showCard(`<div class="big">LAND OF THE DEAD</div><div class="small">a tiny UNDERTALE tribute, in 3D<br><br>three.js + web audio · for Día de los Muertos<br><br><span style="color:#ffd23a">PRESS [Z] TO BEGIN AGAIN</span></div>`);
+  resetGame();
+}
+function resetGame() {
+  B.active = false; B.phase = 'idle'; B.foeKey = null; B.foe = null;
+  B.kills = 0; B.ending = false; B.sansMet = false; B.sansTalking = false;
+  B.done = { calaca: false, froggit: false, toriel: false, papyrus: false };
+  B.playerHP = B.playerMax; B.invuln = 0; B.shake = 0; B.soulMode = 'red';
+  [dummy, froggit, toriel, papyrus].forEach(m => {
+    m.visible = true;
+    m.scale.set(1, 1, 1);
+    m.rotation.set(0, 0, 0);
+    m.position.x = 0; m.position.y = 0;
+    m.userData.explode = false; m.userData.golden = false; m.userData.hitFlash = 0;
+    m.traverse(o => { if (o.material && o.material.isMeshStandardMaterial) o.material.emissiveIntensity = o.material.userData.e0 || 0; });
+  });
+  if (room.userData.endWall) { room.userData.endWall.visible = true; room.userData.endArch.visible = true; }
+  if (room.userData.portal) room.userData.portal.visible = false;
+  const g = room.userData.gate;
+  if (g) {
+    g.doorGlow.material.color.setHex(0xa050ff);
+    g.doorSprite.material.map = glowSprite('#b060ff');
+    g.doorSprite.material.needsUpdate = true;
+    g.doorSprite.material.opacity = 0.5;
+    g.light.color.setHex(0x9a4dff);
+    g.light.intensity = 14;
+  }
+  battleEl.style.display = 'none';
+  hudEl.style.display = 'none'; dlgEl.style.display = 'none'; menuEl.style.display = 'none';
+  cardEl.style.display = 'none';
+  boardShow(false);
+  playerHeart.visible = true;
+  playerHeart.position.set(0, 0.9, 3.6);
+  exploreCamPos.set(0, 3, 6); exploreCamLook.set(0, 1, 0);
+  AudioSys.stopMusic();
+  started = false;
+  gameState = 'title';
+  document.getElementById('title').style.display = 'flex';
+}
+
 /* ============================== GAME STATE / LOOP ============================== */
 let gameState = 'title'; // title, explore, battle
 const clock = new THREE.Clock();
@@ -1535,12 +1628,23 @@ function updateExplore(dt, t) {
   if (B.done.papyrus && !B.sansMet && playerHeart.position.z < -50.2) {
     B.sansMet = true; B.sansTalking = true;
     showHint('');
-    dialog(['* (A short calaca in a big hoodie leans against\n  the Ninth Gate, hands in pockets.)',
+    const sansLines = B.kills === 0 ? [
+      '* (A short calaca in a big hoodie leans against\n  the Ninth Gate, hands in pockets.)',
       '* "heya. real polite bridge-crossing back there.\n  the GREAT PAPYRUS won\'t stop talking\n  about you."',
       '* "me? i\'m nobody. i just watch the door."',
       '* "the ninth gate opens when the ledger\n  balances. kindness weighs more than\n  you\'d think."',
       '* "...see you around, kid. i\'ll be keeping\n  count."',
-      '* (His left eye flickers marigold-gold.)']).then(() => { B.sansTalking = false; showHint('WASD — move'); });
+      '* (His left eye flickers marigold-gold.)'] : [
+      '* (The short calaca by the gate does not\n  look up. His hands stay in his pockets.)',
+      '* "heya. i counted the candles you blew out\n  on your way here. every one of them."',
+      '* "the gate still opens. that\'s the law.\n  kindness weighs more... but emptiness\n  weighs nothing at all."',
+      '* "...go on, kid. i\'ll be keeping count."',
+      '* (His left eye does not flicker.)'];
+    dialog(sansLines).then(() => { B.sansTalking = false; showHint('WASD — move'); });
+  }
+  // the Ninth Gate finale
+  if (B.done.papyrus && !B.ending && !B.sansTalking && playerHeart.position.z < -51.8) {
+    startEnding();
   }
 }
 
@@ -1766,6 +1870,10 @@ function animate() {
     updateExplore(dt, t);
   } else if (gameState === 'battle') {
     updateBattle(dt, t);
+  } else if (gameState === 'ending') {
+    tmpV.set(0, 2.3, -49.0);
+    camera.position.lerp(tmpV, 1 - Math.pow(0.02, dt));
+    camera.lookAt(0, 2.5, -54.5);
   }
   updateBursts(dt);
   updateRuins(dt, t);
@@ -1774,4 +1882,4 @@ function animate() {
 animate();
 
 // debug probe (harmless in prod)
-window.__G = { get state() { return gameState; }, B, playerHeart, dummy, papyrus, board, dir, keys, hurtPlayer, petalBurst };
+window.__G = { get state() { return gameState; }, B, playerHeart, dummy, papyrus, board, dir, keys, hurtPlayer, petalBurst, startEnding, resetGame, waitKey };
